@@ -1,0 +1,5 @@
+USAGE：
+a.exe -rs filename param
+    -s split file to 5
+    -r recover 4 file in 5 to original file
+    filename original filename, without XXXX.s suffix

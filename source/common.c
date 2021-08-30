@@ -8,11 +8,11 @@
 const char *recover_filename_suffix = "r";
 
 const char *split_filename_suffix[SPLIT_FILE_NUM] = 
-		{[Block_ABCD]="ABCD.s", 
-		[Block_BCD]="BCD.s", 
-		[Block_ACD]="ACD.s", 
-		[Block_ABD]="ABD.s", 
-		[Block_ABC]="ABC.s"};
+		{[Block_0]="0.s", 
+		[Block_1]="1.s", 
+		[Block_2]="2.s", 
+		[Block_3]="3.s", 
+		[Block_4]="4.s"};
 
 extern char _binary_usage_txt_start[];
 extern char _binary_usage_txt_end[];

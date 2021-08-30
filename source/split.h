@@ -1,6 +1,6 @@
 
 
 
-int split_proc(int argc, char *argv[]);
+int split_proc(T_FILE_Split_Input input);
 
 

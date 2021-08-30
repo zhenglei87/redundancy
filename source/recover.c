@@ -14,6 +14,7 @@ typedef struct
     unsigned char block_loc[SPLIT_FILE_NUM];
 	size_t file_size[SPLIT_FILE_NUM];
     size_t payload_size[SPLIT_FILE_NUM];
+    unsigned char algorithm_version[SPLIT_FILE_NUM];
 	int missed_split_filecnt;
     int file_cnt;
 }T_FILE_Recover_Ori;
@@ -27,28 +28,76 @@ typedef struct
     unsigned char last_block;
     size_t file_size;
     size_t payload_size;
+    unsigned char algorithm_version;
 }T_FILE_Recover;
 
 
-static void recover_file_4byte(char input[5], E_BLOCK_Loc missblock, char ouput[4])
+/* 如果只是4:1保护，5份数据，分成A^B^C^D,A,B,C,D 计算更简单     */
+/* [0] = A^B^C^D, [1]=B^C^D, [2]=A^C^D, [3]=A^B^D, [4]=B^C^D */
+static void recover_file_4byte_v1(char input[SPLIT_FILE_NUM], E_BLOCK_Loc missblock, char output[BLOCK_SIZE])
 {
 	int i = 0;
 	char block_miss = 0;
     if (missblock < Block_MAX)
     {
     	input[missblock] = 0;
-    	for (i = 0; i < 5; i++)
+    	for (i = 0; i < SPLIT_FILE_NUM; i++)
     	{
     		block_miss = block_miss ^ input[i];
     	}
     	input[missblock] = block_miss;
     }
-	for (i = 0; i < 4; i++)
+	for (i = 0; i < BLOCK_SIZE; i++)
 	{
-		ouput[i] = input[0] ^ input[i + 1];
+		output[i] = input[0] ^ input[i + 1];
 	}
 	return;
 }
+/* [0] = A^B^C^D, [1]=A, [2]=B, [3]=C, [4]=D */
+static void recover_file_4byte_v2(char input[SPLIT_FILE_NUM], E_BLOCK_Loc missblock, char output[BLOCK_SIZE])
+{
+	int i = 0;
+	char block_miss = 0;
+    if (missblock < Block_MAX)
+    {
+    	input[missblock] = 0;
+    	for (i = 0; i < SPLIT_FILE_NUM; i++)
+    	{
+    		block_miss = block_miss ^ input[i];
+    	}
+    	input[missblock] = block_miss;
+    }
+	for (i = 0; i < BLOCK_SIZE; i++)
+	{
+		output[i] = input[i + 1];
+	}
+	return;
+}
+
+static void recover_file_4byte(char input[SPLIT_FILE_NUM], E_BLOCK_Loc missblock, 
+                                      char output[BLOCK_SIZE], 
+                                      unsigned char version)
+{
+    switch (version)
+    {
+        case 1:
+        {
+            recover_file_4byte_v1(input, missblock, output);
+            break;
+        }
+        case 2:
+        {
+            recover_file_4byte_v2(input, missblock, output);
+            break;
+        }
+        default:
+        {
+            assert(0);
+            break;
+        }
+    }
+}
+
 
 static int fopen_for_recover(const char *ori_filename, T_FILE_Recover_Ori *precover_file)
 {
@@ -98,27 +147,56 @@ static int recover_pre_proc(T_FILE_Recover_Ori *fp_recover_ori)
     return 0;
 }
 
+static void recover_read_head_v1(T_FILE_Recover_Ori *fp_recover, int i)
+{
+    T_FILE_Split_HeadV1 headv1;
+    fread(&headv1, sizeof(headv1), 1, fp_recover->fp_split_file[i]);
+    fp_recover->ori_file_last_block[i] = headv1.last_block_cnt;
+    fp_recover->block_loc[i] = headv1.block_loc;
+    fp_recover->payload_size[i] = fp_recover->file_size[i] - sizeof(T_FILE_Split_Head) - sizeof(headv1);
+    fp_recover->algorithm_version[i] = 1;
+    assert(fp_recover->ori_file_last_block[i] <= BLOCK_SIZE);
+    assert(fp_recover->block_loc[i] < Block_MAX);
+}
+
+static void recover_read_head_v2(T_FILE_Recover_Ori *fp_recover, int i)
+{
+    T_FILE_Split_HeadV2 headv2;
+    fread(&headv2, sizeof(headv2), 1, fp_recover->fp_split_file[i]);
+    fp_recover->ori_file_last_block[i] = headv2.last_block_cnt;
+    fp_recover->block_loc[i] = headv2.block_loc;
+    fp_recover->payload_size[i] = fp_recover->file_size[i] - sizeof(T_FILE_Split_Head) - sizeof(headv2);
+    fp_recover->algorithm_version[i] = headv2.algorithm_version;
+    assert(fp_recover->ori_file_last_block[i] <= BLOCK_SIZE);
+    assert(fp_recover->block_loc[i] < Block_MAX);
+}
+
+
 static int recover_read_head(T_FILE_Recover_Ori *fp_recover)
 {
     int i = 0;
 	T_FILE_Split_Head head;
-    T_FILE_Split_HeadV1 headv1;
 	for (i = 0; i < SPLIT_FILE_NUM; i++)
 	{
 		if (fp_recover->fp_split_file[i] == NULL) continue;
 		fread(&head, sizeof(head), 1, fp_recover->fp_split_file[i]);
-        if (head.version == 1)
+        switch (head.version)
         {
-            fread(&headv1, sizeof(headv1), 1, fp_recover->fp_split_file[i]);
-            fp_recover->ori_file_last_block[i] = headv1.last_block_cnt;
-            fp_recover->block_loc[i] = headv1.block_loc;
-            fp_recover->payload_size[i] = fp_recover->file_size[i] - sizeof(head) - sizeof(headv1);
-            assert(fp_recover->ori_file_last_block[i] <= BLOCK_SIZE);
-            assert(fp_recover->block_loc[i] < Block_MAX);
-        }
-        else
-        {
-            assert(0);
+            case 1:
+            {
+                recover_read_head_v1(fp_recover, i);
+                break;
+            }
+            case 2:
+            {
+                recover_read_head_v2(fp_recover, i);
+                break;
+            }
+            default:
+            {
+                assert(0);
+                break;
+            }
         }
 	}
     return 0;
@@ -151,6 +229,12 @@ static int recover_file_check(T_FILE_Recover_Ori *fp_recover_ori, T_FILE_Recover
             LOG("block_loc eque\n");
             assert(0);
         }
+
+        if (fp_recover_ori->algorithm_version[i] != fp_recover_ori->algorithm_version[0])
+        {
+            LOG("version not eque\n");
+            assert(0);
+        }
     }
 
     strcpy(fp_recover->ori_filename, fp_recover_ori->ori_filename);
@@ -158,6 +242,7 @@ static int recover_file_check(T_FILE_Recover_Ori *fp_recover_ori, T_FILE_Recover
     fp_recover->file_size = fp_recover_ori->file_size[0];
     fp_recover->payload_size = fp_recover_ori->payload_size[0];
     fp_recover->last_block = fp_recover_ori->ori_file_last_block[0];
+    fp_recover->algorithm_version = fp_recover_ori->algorithm_version[0];
     fp_recover->missblock = Block_MAX;
     for (i = 0; i < fp_recover_ori->file_cnt; i++)
     {
@@ -188,7 +273,7 @@ static int recover_from_file(T_FILE_Recover *fp_recover, char recover_buf[4])
 		fread(&read_buf, 1, 1, fp_recover->fp_split_file[i]);
         split_buffer[i] = read_buf;
 	}
-	recover_file_4byte(split_buffer, missblock, recover_buf);
+	recover_file_4byte(split_buffer, missblock, recover_buf, fp_recover->algorithm_version);
     return 0;
 }
 
@@ -219,9 +304,9 @@ static void fclose_for_recover(T_FILE_Recover *fp_recover)
 }
 
 
-int recover_proc(int argc, char *argv[])
+int recover_proc(T_FILE_Recover_Input input)
 {
-    const char *filename = argv[2];
+    const char *filename = input.filename;
 	T_FILE_Recover recover_file;
     T_FILE_Recover_Ori recover_file_ori;
     int ret;

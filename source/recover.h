@@ -1,6 +1,6 @@
 
 
 
-int recover_proc(int argc, char *argv[]);
+int recover_proc(T_FILE_Recover_Input input);
 
 
